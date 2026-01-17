@@ -5,17 +5,38 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Speed Reader</title>
   <style>
+    :root {
+      /* Colour variables for light theme */
+      --background: #f5f5f5;
+      --text-color: #333;
+      --container-bg: #fff;
+      --before-color: #888;
+      --anchor-line-color: #e74c3c;
+      --primary-color: #007acc;
+      --primary-hover-color: #005fa3;
+    }
+    /* Dark mode overrides for CSS variables */
+    .dark-mode {
+      --background: #1e1e1e;
+      --text-color: #eee;
+      --container-bg: #2c2c2c;
+      --before-color: #aaa;
+      --anchor-line-color: #e74c3c; /* anchor colour remains; will be updated dynamically via JS */
+      --primary-color: #4a90e2;
+      --primary-hover-color: #3679c2;
+    }
+
     body {
       font-family: Arial, Helvetica, sans-serif;
-      background-color: #f5f5f5;
-      color: #333;
+      background-color: var(--background);
+      color: var(--text-color);
       margin: 0;
       padding: 0;
     }
     .container {
       max-width: 700px;
       margin: 40px auto;
-      background: #fff;
+      background: var(--container-bg);
       padding: 20px;
       border-radius: 8px;
       box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
@@ -40,7 +61,7 @@
       bottom: 0;
       left: 50%;
       width: 2px;
-      background: #e74c3c;
+      background: var(--anchor-line-color);
       transform: translateX(-1px);
       opacity: 0.4;
     }
@@ -64,15 +85,83 @@
       font-size: 1rem;
       border: none;
       border-radius: 4px;
-      background-color: #007acc;
+      background-color: var(--primary-color);
       color: #fff;
       cursor: pointer;
     }
     button:hover {
-      background-color: #005fa3;
+      background-color: var(--primary-hover-color);
     }
     input[type="file"] {
       margin-bottom: 20px;
+    }
+
+    /* Progress indicator below the word display */
+    #progress {
+      margin: 10px 0;
+      font-size: 1rem;
+    }
+
+    /* Settings row for color picker and theme toggle */
+    .settings {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .settings label {
+      font-size: 0.9rem;
+    }
+
+    /* Dark mode styling for elements that need explicit overrides beyond variables */
+    .dark-mode .container {
+      /* Maintain a lighter box-shadow against dark background */
+      box-shadow: 0 2px 10px rgba(255, 255, 255, 0.1);
+    }
+    /* Progress bar styling */
+    #progressBar {
+      width: 100%;
+      height: 6px;
+      border: none;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 10px;
+      background-color: #e0e0e0;
+    }
+    #progressBar::-webkit-progress-bar {
+      background-color: #e0e0e0;
+    }
+    #progressBar::-webkit-progress-value {
+      background-color: var(--primary-color);
+    }
+    #progressBar::-moz-progress-bar {
+      background-color: var(--primary-color);
+    }
+
+    /* Classes used to align and display the characters before the pivot.  The hidden
+       version preserves spacing for alignment without displaying text.  The visible
+       version inherits its colour from a CSS variable so it adapts to dark and light
+       themes automatically. */
+    .hiddenBefore {
+      visibility: hidden;
+    }
+    .before {
+      color: var(--before-color);
+    }
+
+    /* Dark mode styling for progress bar */
+    .dark-mode #progressBar {
+      background-color: #444;
+    }
+    .dark-mode #progressBar::-webkit-progress-bar {
+      background-color: #444;
+    }
+    .dark-mode #progressBar::-webkit-progress-value {
+      background-color: var(--primary-color);
+    }
+    .dark-mode #progressBar::-moz-progress-bar {
+      background-color: var(--primary-color);
     }
   </style>
   <!-- PDF.js library -->
@@ -88,8 +177,25 @@
     <h1>Speed Reader</h1>
     <input type="file" id="fileInput" accept=".pdf,.doc,.docx">
     <div id="display">Upload a PDF or DOCX file to begin.</div>
+    <!-- Reading progress indicator -->
+    <div id="progress"></div>
+    <!-- Visual progress bar showing how far you are through the document -->
+    <progress id="progressBar" value="0" max="100"></progress>
+    <!-- Area for displaying alerts or messages such as comprehension warnings -->
+    <div id="message" style="color: #e74c3c; font-size: 0.9rem; min-height: 1.2em;"></div>
+    <!-- Settings: pivot color picker and dark mode toggle -->
+    <div class="settings">
+      <label for="pivotColor">Pivot color:</label>
+      <input type="color" id="pivotColor" value="#e74c3c">
+      <button id="toggleTheme">Dark Mode</button>
+      <!-- Control for the number of words to display at once -->
+      <label for="chunkSize">Words per flash:</label>
+      <input type="number" id="chunkSize" min="1" max="4" step="1" value="1" style="width: 60px; padding: 4px;">
+    </div>
     <div class="controls" id="controls" hidden>
       <button id="backward" title="Previous word">&laquo;</button>
+      <!-- Reset to the beginning ->
+      <button id="reset" title="Reset to beginning">&#8635;</button>
       <button id="startStop" title="Start/Pause">Start</button>
       <button id="forward" title="Next word">&raquo;</button>
       <input type="range" id="speedControl" min="100" max="1000" step="50" value="300">
@@ -108,19 +214,71 @@
     const speedControl = document.getElementById('speedControl');
     const wpmInput = document.getElementById('wpmInput');
 
+    // Additional controls and messaging
+    const resetButton = document.getElementById('reset');
+    const message = document.getElementById('message');
+
+    // Additional UI elements
+    const progress = document.getElementById('progress');
+    const progressBar = document.getElementById('progressBar');
+    const pivotColorInput = document.getElementById('pivotColor');
+    const toggleTheme = document.getElementById('toggleTheme');
+    const chunkSizeInput = document.getElementById('chunkSize');
+
+    // Current pivot highlight color (initially from the color picker)
+    let currentPivotColor = pivotColorInput.value;
+
+    // Number of words to display at once
+    let chunkSize = parseInt(chunkSizeInput.value, 10) || 1;
+
+    // Create a dynamic style element to update the pivot anchor line color
+    const dynamicStyles = document.createElement('style');
+    document.head.appendChild(dynamicStyles);
+
+    /**
+     * Update the CSS for the pivot anchor line to match the current pivot color.
+     */
+    function updatePivotStyles() {
+      // Update the CSS variable controlling the vertical anchor line colour so that the
+      // pseudo-element uses the new colour automatically.  We target the body element,
+      // which has the `.dark-mode` class when dark mode is active; this ensures the
+      // variable updates regardless of theme.
+      dynamicStyles.innerHTML = 'body { --anchor-line-color: ' + currentPivotColor + '; }';
+    }
+    // Initialise the pivot styles
+    updatePivotStyles();
+
     let wordList = [];
     let index = 0;
     let intervalId = null;
     let isPaused = true;
     let wpm = parseInt(speedControl.value, 10);
 
+    // Show initial warning if the default WPM is high
+    updateWarning();
+
+    /**
+     * Show a warning message if the words-per-minute setting is likely to impact comprehension.
+     * Research indicates that reading at very high speeds (e.g., >600 WPM) can harm comprehension.
+     */
+    function updateWarning() {
+      if (wpm >= 600) {
+        message.textContent = 'Warning: reading at very high speeds may reduce comprehension.';
+      } else {
+        message.textContent = '';
+      }
+    }
+
     function cleanText(text) {
+      // Clean the extracted text by removing empty lines and page numbers.  Unlike earlier versions,
+      // we no longer discard short lines; this prevents single-letter prefixes from being dropped.
       return text.split('\n').filter(line => {
         const trimmed = line.trim();
         if (!trimmed) return false;
-        if (/^\d+$/.test(trimmed)) return false; // filter pure numbers (page numbers)
+        // Remove pure numeric lines (e.g. page numbers)
+        if (/^\d+$/.test(trimmed)) return false;
+        // Remove "page N" lines
         if (/^page\s*\d+/i.test(trimmed)) return false;
-        if (trimmed.length < 3) return false;
         return true;
       }).join(' ');
     }
@@ -129,7 +287,7 @@
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let fullText = '';
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
+       const page = await pdf.getPage(pageNum);
         const content = await page.getTextContent();
         const pageText = content.items.map(item => item.str).join(' ');
         fullText += pageText + '\n';
@@ -179,42 +337,73 @@
      * @returns {number} Zero-based index of the pivot character.
      */
     function getPivot(word) {
+      // Determine the optimal recognition point (pivot index) based on word length.
+      // This mapping is inspired by research on RSVP systems: shorter words are pivoted early,
+      // longer words pivot further to the right. The aim is to always have at least one
+      // character to the left of the highlighted pivot for all but the shortest words.
       const len = word.length;
-      if (len <= 2) return 0;
-      let pivot = Math.floor(len * 0.35);
-      if (pivot >= len) pivot = len - 1;
-      return pivot;
+      if (len <= 1) return 0;
+      if (len <= 5) return 1;
+      if (len <= 9) return 2;
+      if (len <= 13) return 3;
+      return 4;
     }
 
     function showWord() {
       if (!wordList || wordList.length === 0) return;
       if (index < 0) index = 0;
       if (index >= wordList.length) index = wordList.length - 1;
-      const word = wordList[index] || '';
-      const pivot = getPivot(word);
-      const before = word.slice(0, pivot);
-      const pivotChar = word.charAt(pivot);
-      const after = word.slice(pivot + 1);
-      display.innerHTML =
-        '<span style="visibility:hidden">' + before + '</span>' +
-        '<span style="color:#e74c3c">' + pivotChar + '</span>' +
-        after;
+      // Build the chunk of words to display.
+      const words = wordList.slice(index, index + chunkSize);
+      let html = '';
+      words.forEach((word, idx) => {
+        const pivot = getPivot(word);
+        const before = word.slice(0, pivot);
+        const pivotChar = word.charAt(pivot);
+        const after = word.slice(pivot + 1);
+        // Add a space between words except before the first word.
+        if (idx > 0) {
+          html += ' &nbsp;';
+        }
+        // Insert an invisible span of the preceding characters to align the pivot with the vertical anchor line.
+        // Immediately follow it with a visible copy of the same characters using the `before` class so
+        // the user can see the context to the left of the pivot.  Both elements occupy the same width,
+        // avoiding any cut‑off of the first letter.  The colour of the visible span is controlled via CSS variables.
+        html += '<span class="hiddenBefore">' + before + '</span>' +
+          '<span class="before">' + before + '</span>' +
+          '<span style="color:' + currentPivotColor + '">' + pivotChar + '</span>' +
+          after;
+      });
+      display.innerHTML = html;
+      // Update the progress indicator: show the range being displayed
+      if (progress) {
+        const endIndex = Math.min(index + chunkSize, wordList.length);
+        progress.textContent = (index + 1) + '-'
+ + endIndex + ' / ' + wordList.length;
+        if (progressBar) {
+          progressBar.value = (endIndex / wordList.length) * 100;
+        }
+      }
     }
 
     function updateInterval() {
+      // Clear any existing timer
       if (intervalId) clearInterval(intervalId);
+      // Calculate the interval duration: wpm applies per word, but we show chunkSize words at once,
+      // so adjust accordingly to preserve the words-per-minute rate.
+      const intervalDuration = (60000 * chunkSize) / wpm;
       intervalId = setInterval(() => {
         if (!isPaused) {
-          index++;
+          index += chunkSize;
+          // If we've reached or passed the end, stop playback
           if (index >= wordList.length) {
             clearInterval(intervalId);
             isPaused = true;
             startStop.textContent = 'Start';
-          } else {
-            showWord();
           }
+          showWord();
         }
-      }, 60000 / wpm);
+      }, intervalDuration);
     }
 
     fileInput.addEventListener('change', async () => {
@@ -235,8 +424,11 @@
         }
       } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || file.name.toLowerCase().endsWith('.docx')) {
         text = await extractDocText(arrayBuffer);
+      } else if (file.type.startsWith('text/') || file.name.toLowerCase().endsWith('.txt')) {
+        // Simple plain text support
+        text = await file.text();
       } else {
-        display.textContent = 'Unsupported file type. Please upload a PDF or DOCX file.';
+        display.textContent = 'Unsupported file type. Please upload a PDF, DOCX or TXT file.';
         return;
       }
       if (!text) {
@@ -247,6 +439,9 @@
       index = 0;
       showWord();
       controls.hidden = false;
+
+      // Reset any warning message when a new file is loaded
+      message.textContent = '';
     });
 
     startStop.addEventListener('click', () => {
@@ -262,12 +457,25 @@
     });
 
     backward.addEventListener('click', () => {
-      index = Math.max(0, index - 1);
+      // Move backwards by the chunk size
+      index = Math.max(0, index - chunkSize);
       showWord();
     });
 
     forward.addEventListener('click', () => {
-      index = Math.min(wordList.length - 1, index + 1);
+      // Move forwards by the chunk size
+      index = Math.min(wordList.length - chunkSize, index + chunkSize);
+      if (index < 0) index = 0;
+      showWord();
+    });
+
+    // Reset to the beginning: set index to 0, pause, and show the first chunk
+    resetButton.addEventListener('click', () => {
+      index = 0;
+      // pause playback and update button text
+      isPaused = true;
+      if (intervalId) clearInterval(intervalId);
+      startStop.textContent = 'Start';
       showWord();
     });
 
@@ -277,6 +485,9 @@
       if (!isPaused) {
         updateInterval();
       }
+
+      // Update warning message based on new WPM
+      updateWarning();
     });
 
     wpmInput.addEventListener('input', () => {
@@ -288,8 +499,57 @@
       if (val > parseInt(speedControl.max, 10)) val = parseInt(speedControl.max, 10);
       wpm = val;
       speedControl.value = wpm;
-      if (!isPaused) {
+      
+if (!isPaused) {
         updateInterval();
+      }
+
+      // Update warning message based on new WPM
+      updateWarning();
+    });
+
+    // Update pivot color when the user selects a new color
+    pivotColorInput.addEventListener('input', () => {
+      currentPivotColor = pivotColorInput.value;
+      updatePivotStyles();
+      showWord();
+    });
+
+    // Toggle dark mode on button click
+    toggleTheme.addEventListener('click', () => {
+      document.body.classList.toggle('dark-mode');
+      if (document.body.classList.contains('dark-mode')) {
+        toggleTheme.textContent = 'Light Mode';
+      } else {
+        toggleTheme.textContent = 'Dark Mode';
+      }
+    });
+
+    // Update chunk size when the user changes it
+    chunkSizeInput.addEventListener('input', () => {
+      let val = parseInt(chunkSizeInput.value, 10);
+      if (isNaN(val) || val < 1) val = 1;
+      if (val > 4) val = 4;
+      chunkSize = val;
+      chunkSizeInput.value = val;
+      showWord();
+    });
+
+    // Keyboard shortcuts for playback controls
+    document.addEventListener('keydown', (e) => {
+      const tag = (e.target && e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea') return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (wordList && wordList.length > 0) {
+          startStop.click();
+        }
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        backward.click();
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        forward.click();
       }
     });
   </script>
