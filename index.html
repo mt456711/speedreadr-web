@@ -1,108 +1,297 @@
 <!DOCTYPE html>
-<html lang='en'>
+<html lang="en">
 <head>
-<meta charset='UTF-8'>
-<title>SpeedReadr</title>
-<style>
-body { font-family: sans-serif; margin: 2rem; }
-#controls { margin-bottom: 1rem; }
-#display { font-size: 2rem; font-weight: bold; height: 3rem; border: 1px solid #ccc; padding: 1rem; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Speed Reader</title>
+  <style>
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background-color: #f5f5f5;
+      color: #333;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 700px;
+      margin: 40px auto;
+      background: #fff;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      text-align: center;
+    }
+    h1 {
+      margin-bottom: 20px;
+    }
+    #display {
+      font-size: 3rem;
+      line-height: 1.2;
+      min-height: 80px;
+      margin: 40px 0;
+      position: relative;
+      word-wrap: break-word;
+    }
+    /* Vertical anchor line to align pivot characters */
+    #display::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 2px;
+      background: #e74c3c;
+      transform: translateX(-1px);
+      opacity: 0.4;
+    }
+    .controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .controls input[type="range"] {
+      flex: 1;
+    }
+    .controls input[type="number"] {
+      width: 80px;
+      padding: 5px;
+      text-align: center;
+    }
+    button {
+      padding: 10px 16px;
+      font-size: 1rem;
+      border: none;
+      border-radius: 4px;
+      background-color: #007acc;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #005fa3;
+    }
+    input[type="file"] {
+      margin-bottom: 20px;
+    }
+  </style>
+  <!-- PDF.js library -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.15.349/build/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.15.349/build/pdf.worker.min.js"></script>
+  <!-- Tesseract.js for OCR -->
+  <script src="https://unpkg.com/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+  <!-- Mammoth.js for Word document extraction -->
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.4.8/mammoth.browser.min.js"></script>
 </head>
 <body>
-<h1>SpeedReadr</h1>
-<input type='file' id='file-input' accept='.pdf'>
-<div id='controls' hidden>
-  <label>Words per minute:
-    <input type='range' id='speed' min='100' max='800' value='300' step='50'>
-  </label>
-  <button id='start-btn'>Start</button>
-  <button id='pause-btn'>Pause</button>
-</div>
-<div id='display'></div>
-<script src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.15.349/pdf.min.js'></script>
-<script src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.15.349/pdf.worker.min.js'></script>
-<script src='https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js'></script>
-<script>
-const fileInput = document.getElementById('file-input');
-const controls = document.getElementById('controls');
-let wordList = [];
-let index = 0;
-let timer;
+  <div class="container">
+    <h1>Speed Reader</h1>
+    <input type="file" id="fileInput" accept=".pdf,.doc,.docx">
+    <div id="display">Upload a PDF or DOCX file to begin.</div>
+    <div class="controls" id="controls" hidden>
+      <button id="backward" title="Previous word">&laquo;</button>
+      <button id="startStop" title="Start/Pause">Start</button>
+      <button id="forward" title="Next word">&raquo;</button>
+      <input type="range" id="speedControl" min="100" max="1000" step="50" value="300">
+      <input type="number" id="wpmInput" min="100" max="1000" step="50" value="300">
+      <span>WPM</span>
+    </div>
+  </div>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.15.349/build/pdf.worker.min.js';
+    const fileInput = document.getElementById('fileInput');
+    const display = document.getElementById('display');
+    const controls = document.getElementById('controls');
+    const startStop = document.getElementById('startStop');
+    const backward = document.getElementById('backward');
+    const forward = document.getElementById('forward');
+    const speedControl = document.getElementById('speedControl');
+    const wpmInput = document.getElementById('wpmInput');
 
-fileInput.addEventListener('change', async () => {
-  const file = fileInput.files[0];
-  if (!file) return;
-  wordList = [];
-  index = 0;
-  const arrayBuffer = await file.arrayBuffer();
-  const typedArray = new Uint8Array(arrayBuffer);
-  const pdf = await pdfjsLib.getDocument({ data: typedArray }).promise;
-  let text = '';
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    content.items.forEach(item => {
-      text += item.str + ' ';
-    });
-  }
-  if (text.trim().length < 20) {
-    text = '';
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 1.5 });
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      await page.render({ canvasContext: context, viewport }).promise;
-      const result = await Tesseract.recognize(canvas, 'eng');
-      text += result.data.text + ' ';
+    let wordList = [];
+    let index = 0;
+    let intervalId = null;
+    let isPaused = true;
+    let wpm = parseInt(speedControl.value, 10);
+
+    function cleanText(text) {
+      return text.split('\n').filter(line => {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        if (/^\d+$/.test(trimmed)) return false; // filter pure numbers (page numbers)
+        if (/^page\s*\d+/i.test(trimmed)) return false;
+        if (trimmed.length < 3) return false;
+        return true;
+      }).join(' ');
     }
-  }
-wordList = text.replace(/\s+/g, ' ').trim().split(' ');
-  
-  controls.hidden = false;
-  });
-  
 
-const display = document.getElementById('display');
-const speedSlider = document.getElementById('speed');
-const startBtn = document.getElementById('start-btn');
-const pauseBtn = document.getElementById('pause-btn');
+    async function extractPdfText(arrayBuffer) {
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = '';
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const content = await page.getTextContent();
+        const pageText = content.items.map(item => item.str).join(' ');
+        fullText += pageText + '\n';
+      }
+      return cleanText(fullText);
+    }
 
-function getPivot(word) {
-  const len = word.length;
-  if (len <= 1) return 0;
-  if (len <= 5) return 1;
-  if (len <= 9) return 2;
-  if (len <= 13) return 3;
-  return 4;
-}
+    async function ocrPdf(arrayBuffer) {
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = '';
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({ canvasContext: context, viewport }).promise;
+        const { data: { text } } = await Tesseract.recognize(canvas, 'eng', { logger: m => console.log(m) });
+        fullText += text + '\n';
+      }
+      return cleanText(fullText);
+    }
 
-function showWord() {
-  if (index >= wordList.length) {
-    clearInterval(timer);
-    return;
-  }
-  const word = wordList[index++];
-  const pivotIndex = getPivot(word);
-  const before = word.slice(0, pivotIndex);
-  const pivot = word[pivotIndex] || '';
-  const after = word.slice(pivotIndex + 1);
-  display.innerHTML = `<span style='visibility:hidden'>${before}</span><span style='color:red'>${pivot}</span>${after}`;
-}
+    async function extractDocText(arrayBuffer) {
+      try {
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        return cleanText(result.value);
+      } catch (err) {
+        console.error('DOCX extraction error:', err);
+        return '';
+      }
+    }
 
-startBtn.addEventListener('click', () => {
-  clearInterval(timer);
-  const delay = 60000 / parseInt(speedSlider.value, 10);
-  showWord();
-  timer = setInterval(showWord, delay);
-});
+    function prepareWords(text) {
+      return text.replace(/\s+/g, ' ').trim().split(' ');
+    }
 
-pauseBtn.addEventListener('click', () => {
-  clearInterval(timer);
-});
-</script>
+    /**
+     * Determine the index of the pivot (red) character for a given word.
+     *
+     * Readers recognise words fastest when their gaze lands slightly to the left of centre.
+     * To approximate this behaviour, calculate the pivot as roughly 35% of the word length.
+     * For very short words, fall back to the first character.
+     *
+     * @param {string} word The word to pivot.
+     * @returns {number} Zero-based index of the pivot character.
+     */
+    function getPivot(word) {
+      const len = word.length;
+      if (len <= 2) return 0;
+      let pivot = Math.floor(len * 0.35);
+      if (pivot >= len) pivot = len - 1;
+      return pivot;
+    }
+
+    function showWord() {
+      if (!wordList || wordList.length === 0) return;
+      if (index < 0) index = 0;
+      if (index >= wordList.length) index = wordList.length - 1;
+      const word = wordList[index] || '';
+      const pivot = getPivot(word);
+      const before = word.slice(0, pivot);
+      const pivotChar = word.charAt(pivot);
+      const after = word.slice(pivot + 1);
+      display.innerHTML =
+        '<span style="visibility:hidden">' + before + '</span>' +
+        '<span style="color:#e74c3c">' + pivotChar + '</span>' +
+        after;
+    }
+
+    function updateInterval() {
+      if (intervalId) clearInterval(intervalId);
+      intervalId = setInterval(() => {
+        if (!isPaused) {
+          index++;
+          if (index >= wordList.length) {
+            clearInterval(intervalId);
+            isPaused = true;
+            startStop.textContent = 'Start';
+          } else {
+            showWord();
+          }
+        }
+      }, 60000 / wpm);
+    }
+
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      display.textContent = 'Processing file...';
+      controls.hidden = true;
+      wordList = [];
+      index = 0;
+      isPaused = true;
+      startStop.textContent = 'Start';
+      const arrayBuffer = await file.arrayBuffer();
+      let text = '';
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        text = await extractPdfText(arrayBuffer);
+        if (!text || text.split(/\s+/).length < 10) {
+          text = await ocrPdf(arrayBuffer);
+        }
+      } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || file.name.toLowerCase().endsWith('.docx')) {
+        text = await extractDocText(arrayBuffer);
+      } else {
+        display.textContent = 'Unsupported file type. Please upload a PDF or DOCX file.';
+        return;
+      }
+      if (!text) {
+        display.textContent = 'No text could be extracted.';
+        return;
+      }
+      wordList = prepareWords(text);
+      index = 0;
+      showWord();
+      controls.hidden = false;
+    });
+
+    startStop.addEventListener('click', () => {
+      if (wordList.length === 0) return;
+      isPaused = !isPaused;
+      if (!isPaused) {
+        startStop.textContent = 'Pause';
+        updateInterval();
+      } else {
+        startStop.textContent = 'Start';
+        if (intervalId) clearInterval(intervalId);
+      }
+    });
+
+    backward.addEventListener('click', () => {
+      index = Math.max(0, index - 1);
+      showWord();
+    });
+
+    forward.addEventListener('click', () => {
+      index = Math.min(wordList.length - 1, index + 1);
+      showWord();
+    });
+
+    speedControl.addEventListener('input', () => {
+      wpm = parseInt(speedControl.value, 10);
+      wpmInput.value = wpm;
+      if (!isPaused) {
+        updateInterval();
+      }
+    });
+
+    wpmInput.addEventListener('input', () => {
+      let val = parseInt(wpmInput.value, 10);
+      if (isNaN(val)) {
+        val = wpm;
+      }
+      if (val < parseInt(speedControl.min, 10)) val = parseInt(speedControl.min, 10);
+      if (val > parseInt(speedControl.max, 10)) val = parseInt(speedControl.max, 10);
+      wpm = val;
+      speedControl.value = wpm;
+      if (!isPaused) {
+        updateInterval();
+      }
+    });
+  </script>
 </body>
 </html>
